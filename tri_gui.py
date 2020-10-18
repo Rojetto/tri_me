@@ -2,6 +2,7 @@ from PyQt5 import QtCore, QtWidgets, QtGui
 import sys
 import numpy as np
 from scipy.spatial.qhull import Delaunay
+from PIL import Image
 
 
 class TriMeWindow(QtWidgets.QMainWindow):
@@ -51,6 +52,12 @@ class TriMeWindow(QtWidgets.QMainWindow):
 
         buttons_layout.addWidget(self.show_picture)
 
+        self.fill_triangles = QtWidgets.QCheckBox('Fill triangles')
+        self.fill_triangles.setChecked(self.master_widget.fill_triangles)
+        self.fill_triangles.stateChanged.connect(self.on_setting_changed)
+
+        buttons_layout.addWidget(self.fill_triangles)
+
         buttons_layout.addStretch(10)
 
         triangulate = QtWidgets.QPushButton('Triangulate!')
@@ -68,7 +75,22 @@ class TriMeWindow(QtWidgets.QMainWindow):
         self.master_widget.brush_color = int(self.brush_value.value() * 255)
         self.master_widget.rho_max = self.max_density.value()
         self.master_widget.show_picture = self.show_picture.isChecked()
+        self.master_widget.fill_triangles = self.fill_triangles.isChecked()
         self.master_widget.repaint()
+
+
+def point_in_triangle(p: np.ndarray, tri_points: np.ndarray):
+    """
+    tri_points is 3x2
+    """
+
+    d1 = (p[0] - tri_points[0, 0]) * (tri_points[1, 1] - tri_points[0, 1]) -\
+         (p[1] - tri_points[0, 1]) * (tri_points[1, 0] - tri_points[0, 0])
+    d2 = (p[0] - tri_points[1, 0]) * (tri_points[2, 1] - tri_points[1, 1]) -\
+         (p[1] - tri_points[1, 1]) * (tri_points[2, 0] - tri_points[1, 0])
+    d3 = (p[0] - tri_points[2, 0]) * (tri_points[0, 1] - tri_points[2, 1]) -\
+         (p[1] - tri_points[2, 1]) * (tri_points[0, 0] - tri_points[2, 0])
+    return (d1 > 0 and d2 > 0 and d3 > 0) or (d1 < 0 and d2 < 0 and d3 < 0)
 
 
 class TriMeMasterWidget(QtWidgets.QWidget):
@@ -76,10 +98,13 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         super().__init__()
 
         self.img = QtGui.QPixmap('danny.jpg')
+        pil_img = Image.open('danny.jpg')
+        self.img_arr = np.array(pil_img)
         # Default: everything white (no tris)
         self.density_array = np.ones((self.img.height(), self.img.width()), dtype=np.ubyte) * 255
 
         self.show_picture = True
+        self.fill_triangles = True
 
         self.brush_color = 0
         self.brush_radius = 50
@@ -88,6 +113,7 @@ class TriMeMasterWidget(QtWidgets.QWidget):
 
         self.ps = np.zeros((0, 2))
         self.tri_indices = np.zeros((0, 3))
+        self.tri_colors = np.zeros((0, 3))
 
     def triangulate(self):
         # --- estimate number of needed points based on density map
@@ -125,6 +151,30 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         tria = Delaunay(self.ps)
         self.tri_indices = tria.simplices
 
+        # triangle coloring
+        n_tris = self.tri_indices.shape[0]
+        self.tri_colors = np.zeros((n_tris, 3), dtype=np.ubyte)
+
+        for i in range(n_tris):
+            tri_points = self.ps[self.tri_indices[i]]
+            x_min = int(np.min(tri_points[:, 0]))
+            x_max = int(np.max(tri_points[:, 0]))
+            y_min = int(np.min(tri_points[:, 1]))
+            y_max = int(np.max(tri_points[:, 1]))
+
+            color_sum = np.zeros(3)
+            n_pixels = 0
+
+            for x in range(x_min, x_max):
+                for y in range(y_min, y_max):
+                    p = np.array([x, y])
+                    if point_in_triangle(p, tri_points):
+                        color_sum += self.img_arr[y][x]
+                        n_pixels += 1
+
+            avg_color = (color_sum / n_pixels).astype(np.ubyte)
+            self.tri_colors[i] = avg_color
+
         self.repaint()
 
     def paintEvent(self, e: QtGui.QPaintEvent):
@@ -160,15 +210,20 @@ class TriMeMasterWidget(QtWidgets.QWidget):
             cx = int(self.ps[i, 0] * cw / iw)
             cy = int(self.ps[i, 1] * ch / ih)
             r = 10
-            painter.drawEllipse(cx - r, cy - r, 2*r, 2*r)
+            #painter.drawEllipse(cx - r, cy - r, 2*r, 2*r)
         painter.restore()
 
         painter.save()
         blue = QtGui.QColor('blue')
-        painter.setPen(blue)
         for i in range(self.tri_indices.shape[0]):
             tri_points = self.ps[self.tri_indices[i]] * cw / iw
             poly = QtGui.QPolygonF([QtCore.QPointF(*tri_point) for tri_point in tri_points])
+            color = QtGui.QColor(*self.tri_colors[i])
+            if self.fill_triangles:
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.setBrush(color)
+            else:
+                painter.setPen(blue)
             painter.drawPolygon(poly)
         painter.restore()
 
