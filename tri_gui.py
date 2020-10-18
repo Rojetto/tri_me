@@ -45,15 +45,6 @@ class TriMeWindow(QtWidgets.QMainWindow):
         buttons_layout.addWidget(QtWidgets.QLabel('Density:'))
         buttons_layout.addWidget(self.max_density)
 
-        self.points = QtWidgets.QDoubleSpinBox()
-        self.points.setRange(0, 1000)
-        self.points.setDecimals(0)
-        self.points.setValue(self.master_widget.N)
-        self.points.valueChanged.connect(self.on_setting_changed)
-
-        buttons_layout.addWidget(QtWidgets.QLabel('Points:'))
-        buttons_layout.addWidget(self.points)
-
         self.show_picture = QtWidgets.QCheckBox('Show picture')
         self.show_picture.setChecked(self.master_widget.show_picture)
         self.show_picture.stateChanged.connect(self.on_setting_changed)
@@ -76,7 +67,6 @@ class TriMeWindow(QtWidgets.QMainWindow):
         self.master_widget.brush_radius = int(self.brush_radius.value())
         self.master_widget.brush_color = int(self.brush_value.value() * 255)
         self.master_widget.rho_max = self.max_density.value()
-        self.master_widget.N = int(self.points.value())
         self.master_widget.show_picture = self.show_picture.isChecked()
         self.master_widget.repaint()
 
@@ -95,24 +85,29 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         self.brush_radius = 50
 
         self.rho_max = 1
-        self.N = 10
 
         self.ps = np.zeros((0, 2))
         self.tri_indices = np.zeros((0, 3))
 
     def triangulate(self):
-        self.ps = np.ones((self.N, 2)) * 1e6  # initialize coordinates to (1e6, 1e6)
+        # --- estimate number of needed points based on density map
+        # rescale from bitmap to densities: 0 -> rho_max / 1e4        255 -> 0
+        rho_arr = (255 - self.density_array)/255 * self.rho_max / 1e4
+        # integrate over density (with buffer factor) to get total amount of points
+        N = int(np.sum(rho_arr) * 0.9)
+
+        # poisson disc sampling
+        self.ps = np.ones((N, 2)) * 1e6  # initialize coordinates to (1e6, 1e6)
         nr_points = 0
 
         same_point_iterations = 0
-        while nr_points < self.N and same_point_iterations < 1e4:
+        while nr_points < N and same_point_iterations < 1e4:
             same_point_iterations += 1
             p = np.array([np.random.rand() * self.density_array.shape[1],
                           np.random.rand() * self.density_array.shape[0]])
             img_row = int(p[1])
             img_col = int(p[0])
-            a = (255 - self.density_array[img_row, img_col])/255  # 0 -> rho_min, 1 -> rho_max
-            rho = a * self.rho_max / 1e4  # rho max is scaled for input
+            rho = rho_arr[img_row, img_col]
 
             if rho == 0:
                 r = 10000
@@ -123,9 +118,10 @@ class TriMeMasterWidget(QtWidgets.QWidget):
             if has_rmin_to_all and rho > 0:
                 self.ps[nr_points, :] = p
                 nr_points += 1
-                print(nr_points, "/", self.N)
+                print(nr_points, "/", N)
                 same_point_iterations = 0
 
+        # triangulation
         tria = Delaunay(self.ps)
         self.tri_indices = tria.simplices
 
