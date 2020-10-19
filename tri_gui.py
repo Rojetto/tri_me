@@ -4,6 +4,7 @@ import numpy as np
 from scipy.spatial.qhull import Delaunay
 from PIL import Image
 from easytime import Timer
+import os.path
 
 
 class TriMeWindow(QtWidgets.QMainWindow):
@@ -21,6 +22,11 @@ class TriMeWindow(QtWidgets.QMainWindow):
 
         buttons_layout = QtWidgets.QHBoxLayout()
         main_layout.addLayout(buttons_layout)
+
+        load_image = QtWidgets.QPushButton('Load image')
+        load_image.clicked.connect(self.on_load_image)
+
+        buttons_layout.addWidget(load_image)
 
         self.brush_value = QtWidgets.QDoubleSpinBox()
         self.brush_value.setRange(0, 100)
@@ -71,19 +77,10 @@ class TriMeWindow(QtWidgets.QMainWindow):
         self.master_widget.fill_triangles = self.fill_triangles.isChecked()
         self.master_widget.repaint()
 
-
-def point_in_triangle(p: np.ndarray, tri_points: np.ndarray):
-    """
-    tri_points is 3x2
-    """
-
-    d1 = (p[0] - tri_points[0, 0]) * (tri_points[1, 1] - tri_points[0, 1]) -\
-         (p[1] - tri_points[0, 1]) * (tri_points[1, 0] - tri_points[0, 0])
-    d2 = (p[0] - tri_points[1, 0]) * (tri_points[2, 1] - tri_points[1, 1]) -\
-         (p[1] - tri_points[1, 1]) * (tri_points[2, 0] - tri_points[1, 0])
-    d3 = (p[0] - tri_points[2, 0]) * (tri_points[0, 1] - tri_points[2, 1]) -\
-         (p[1] - tri_points[2, 1]) * (tri_points[0, 0] - tri_points[2, 0])
-    return (d1 > 0 and d2 > 0 and d3 > 0) or (d1 < 0 and d2 < 0 and d3 < 0)
+    def on_load_image(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Open image', filter='Image Files (*.png *.jpg *.jpeg *.bmp);; All Files (*)')
+        if os.path.isfile(path):
+            self.master_widget.load_image(path)
 
 
 def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, bridson_k=30):
@@ -175,12 +172,6 @@ class TriMeMasterWidget(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
 
-        self.img = QtGui.QPixmap('danny.jpg')
-        pil_img = Image.open('danny.jpg')
-        self.img_arr = np.array(pil_img)
-        # Default: everything white (no tris)
-        self.density_array = np.ones((self.img.height(), self.img.width()), dtype=np.ubyte) * 255
-
         self.show_picture = True
         self.fill_triangles = True
 
@@ -189,9 +180,20 @@ class TriMeMasterWidget(QtWidgets.QWidget):
 
         self.density_orders = 5
 
+        self.load_image('danny.jpg')
+
+    def load_image(self, path):
+        self.img = QtGui.QPixmap(path)
+        pil_img = Image.open(path)
+        self.img_arr = np.array(pil_img)
+        # Default: everything white (no tris)
+        self.density_array = np.ones((self.img.height(), self.img.width()), dtype=np.ubyte) * 255
+
         self.ps = np.zeros((0, 2))
         self.tri_indices = np.zeros((0, 3))
         self.tri_colors = np.zeros((0, 3))
+
+        self.update()
 
     def triangulate(self):
         # --- estimate number of needed points based on density map
