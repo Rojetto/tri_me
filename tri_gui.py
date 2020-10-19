@@ -87,16 +87,12 @@ def point_in_triangle(p: np.ndarray, tri_points: np.ndarray):
 
 
 def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, bridson_k=30):
-    timer = Timer()
-
     grid = np.ones(rho_arr.shape, dtype=int) * -1
-    timer.tic('building coordinate grid')
     coordinate_grid = np.zeros((*grid.shape, 2))  # accelerator structure for circle checks
     for y in range(grid.shape[0]):
         for x in range(grid.shape[1]):
             coordinate_grid[y,x,0] = x
             coordinate_grid[y,x,1] = y
-    timer.toc()
     samples = []
 
     def density_to_radius(rho):
@@ -138,7 +134,6 @@ def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, 
 
     done = False
     while not done:
-        timer.tic('global seeding')
         active_list = []
         # find a viable seed sample by global dart throwing
         for i in range(global_seed_throws):
@@ -149,21 +144,17 @@ def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, 
                 break
         else:
             done = True
-        timer.toc()
 
         if done:
             break
 
-        timer.tic('Bridson')
         # run Bridson's algorithm from seed
         while active_list:
             # pick random sample from active_list
             pi = int(np.random.rand()*len(active_list))
             p = samples[active_list[pi]]
 
-            timer.tic('candidate selection')
             for i in range(bridson_k):
-                timer.tic('selecting random candidate')
                 # random candidate sample from annulum around p with [r, 2r]
                 rho = rho_arr[int(p[1]), int(p[0])]
                 r = density_to_radius(rho)
@@ -171,18 +162,11 @@ def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, 
                 a = 2 * np.pi * np.random.rand()
 
                 candidate = np.array([p[0] + R * np.cos(a), p[1] + R * np.sin(a)])
-                timer.toc()
-                timer.tic('candidate viability check and add')
                 if is_viable(candidate):
                     candidate_index = add_sample(candidate)
                     active_list.append(candidate_index)
-                timer.toc()
             else:
                 active_list.pop(pi)
-            timer.toc()
-        timer.toc()
-
-    timer.print()
 
     return np.array(samples)
 
