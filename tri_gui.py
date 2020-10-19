@@ -155,24 +155,26 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         n_tris = self.tri_indices.shape[0]
         self.tri_colors = np.zeros((n_tris, 3), dtype=np.ubyte)
 
+        barycentric_samples = np.array([
+            [1, 1, 1],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [1, 0.5, 0.5],
+            [0.5, 1, 0.5],
+            [0.5, 0.5, 1]])
+
         for i in range(n_tris):
             tri_points = self.ps[self.tri_indices[i]]
-            x_min = int(np.min(tri_points[:, 0]))
-            x_max = int(np.max(tri_points[:, 0]))
-            y_min = int(np.min(tri_points[:, 1]))
-            y_max = int(np.max(tri_points[:, 1]))
 
             color_sum = np.zeros(3)
-            n_pixels = 0
 
-            for x in range(x_min, x_max):
-                for y in range(y_min, y_max):
-                    p = np.array([x, y])
-                    if point_in_triangle(p, tri_points):
-                        color_sum += self.img_arr[y][x]
-                        n_pixels += 1
+            for b_sample in barycentric_samples:
+                sample = (b_sample @ tri_points / sum(b_sample)).astype(int)
+                color_sum += np.power(self.img_arr[sample[1], sample[0]].astype(float), 2)
 
-            avg_color = (color_sum / n_pixels).astype(np.ubyte)
+            # RMS instead of mean, supposedly more colour accurate
+            avg_color = np.sqrt(color_sum / barycentric_samples.shape[0]).astype(np.ubyte)
             self.tri_colors[i] = avg_color
 
         self.repaint()
