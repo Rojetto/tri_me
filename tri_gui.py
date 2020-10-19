@@ -93,6 +93,81 @@ def point_in_triangle(p: np.ndarray, tri_points: np.ndarray):
     return (d1 > 0 and d2 > 0 and d3 > 0) or (d1 < 0 and d2 < 0 and d3 < 0)
 
 
+def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, bridson_k=30):
+    grid = np.ones(rho_arr.shape, dtype=int) * -1
+    samples = []
+
+    def density_to_radius(rho):
+        if rho == 0:
+            r = np.inf
+        else:
+            r = np.sqrt(1 / (2 * np.sqrt(3) * rho))
+
+        return r
+
+    def is_viable(p: np.ndarray):
+        p_int = p.astype(int)
+        if p_int[0] < 0 or p_int[0] > grid.shape[1] - 1 or p_int[1] < 0 or p_int[1] > grid.shape[0] - 1:
+            return False
+
+        rho = rho_arr[p_int[1], p_int[0]]
+        if rho == 0:
+            return False
+
+        r = density_to_radius(rho)
+        for y in range(max(0, p_int[1] - int(r)), min(grid.shape[0] - 1, p_int[1] + int(r))):
+            for x in range(max(0, p_int[0] - int(r)), min(grid.shape[1] - 1, p_int[0] + int(r))):
+                if (x - p[0])**2 + (y - p[1])**2 < r**2 and grid[y, x] >= 0:
+                    return False
+
+        return True
+
+    def add_sample(p: np.ndarray):
+        samples.append(p)
+        index = len(samples) - 1
+        grid[int(p[1]), int(p[0])] = index
+
+        return index
+
+    done = False
+    while not done:
+        active_list = []
+        # find a viable seed sample by global dart throwing
+        for i in range(global_seed_throws):
+            sample = np.array([np.random.rand() * grid.shape[1], np.random.rand() * grid.shape[0]])
+            if is_viable(sample):
+                sample_index = add_sample(sample)
+                active_list.append(sample_index)
+                break
+        else:
+            done = True
+
+        if done:
+            break
+
+        # run Bridson's algorithm from seed
+        while active_list:
+            # pick random sample from active_list
+            pi = int(np.random.rand()*len(active_list))
+            p = samples[active_list[pi]]
+
+            for i in range(bridson_k):
+                # random candidate sample from annulum around p with [r, 2r]
+                rho = rho_arr[int(p[1]), int(p[0])]
+                r = density_to_radius(rho)
+                R = r + np.random.rand() * (r)
+                a = 2 * np.pi * np.random.rand()
+
+                candidate = np.array([p[0] + R * np.cos(a), p[1] + R * np.sin(a)])
+                if is_viable(candidate):
+                    candidate_index = add_sample(candidate)
+                    active_list.append(candidate_index)
+            else:
+                active_list.pop(pi)
+
+    return np.array(samples)
+
+
 class TriMeMasterWidget(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -119,33 +194,9 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         # --- estimate number of needed points based on density map
         # rescale from bitmap to densities: 0 -> rho_max / 1e4        255 -> 0
         rho_arr = (255 - self.density_array)/255 * self.rho_max / 1e4
-        # integrate over density (with buffer factor) to get total amount of points
-        N = int(np.sum(rho_arr) * 0.9)
 
         # poisson disc sampling
-        self.ps = np.ones((N, 2)) * 1e6  # initialize coordinates to (1e6, 1e6)
-        nr_points = 0
-
-        same_point_iterations = 0
-        while nr_points < N and same_point_iterations < 1e4:
-            same_point_iterations += 1
-            p = np.array([np.random.rand() * self.density_array.shape[1],
-                          np.random.rand() * self.density_array.shape[0]])
-            img_row = int(p[1])
-            img_col = int(p[0])
-            rho = rho_arr[img_row, img_col]
-
-            if rho == 0:
-                r = 10000
-            else:
-                r = np.sqrt(1 / (2 * np.sqrt(3) * rho))
-
-            has_rmin_to_all = all(np.sum(np.power(self.ps - p, 2), axis=1) > r ** 2)
-            if has_rmin_to_all and rho > 0:
-                self.ps[nr_points, :] = p
-                nr_points += 1
-                print(nr_points, "/", N)
-                same_point_iterations = 0
+        self.ps = weighted_poisson_disc_sampling(rho_arr, bridson_k=10)
 
         # triangulation
         tria = Delaunay(self.ps)
