@@ -13,6 +13,7 @@ class TriMeWindow(QtWidgets.QMainWindow):
         QtWidgets.QMainWindow.__init__(self, parent)
 
         self.setWindowTitle('Triangulate Me!')
+        self.setWindowIcon(QtGui.QIcon('icon.png'))
 
         self.master_widget = TriMeMasterWidget()
 
