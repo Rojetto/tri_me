@@ -23,8 +23,9 @@ class TriMeWindow(QtWidgets.QMainWindow):
         main_layout.addLayout(buttons_layout)
 
         self.brush_value = QtWidgets.QDoubleSpinBox()
-        self.brush_value.setRange(0, 1)
-        self.brush_value.setValue(self.master_widget.brush_color / 255)
+        self.brush_value.setRange(0, 100)
+        self.brush_value.setDecimals(0)
+        self.brush_value.setValue(self.master_widget.brush_value)
         self.brush_value.valueChanged.connect(self.on_setting_changed)
 
         buttons_layout.addWidget(QtWidgets.QLabel('Value:'))
@@ -38,14 +39,6 @@ class TriMeWindow(QtWidgets.QMainWindow):
 
         buttons_layout.addWidget(QtWidgets.QLabel('Radius:'))
         buttons_layout.addWidget(self.brush_radius)
-
-        self.max_density = QtWidgets.QDoubleSpinBox()
-        self.max_density.setRange(0.01, 100)
-        self.max_density.setValue(self.master_widget.rho_max)
-        self.max_density.valueChanged.connect(self.on_setting_changed)
-
-        buttons_layout.addWidget(QtWidgets.QLabel('Density:'))
-        buttons_layout.addWidget(self.max_density)
 
         self.show_picture = QtWidgets.QCheckBox('Show picture')
         self.show_picture.setChecked(self.master_widget.show_picture)
@@ -73,8 +66,7 @@ class TriMeWindow(QtWidgets.QMainWindow):
 
     def on_setting_changed(self):
         self.master_widget.brush_radius = int(self.brush_radius.value())
-        self.master_widget.brush_color = int(self.brush_value.value() * 255)
-        self.master_widget.rho_max = self.max_density.value()
+        self.master_widget.brush_value = int(self.brush_value.value())
         self.master_widget.show_picture = self.show_picture.isChecked()
         self.master_widget.fill_triangles = self.fill_triangles.isChecked()
         self.master_widget.repaint()
@@ -208,10 +200,10 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         self.show_picture = True
         self.fill_triangles = True
 
-        self.brush_color = 0
+        self.brush_value = 50
         self.brush_radius = 50
 
-        self.rho_max = 1
+        self.density_orders = 5
 
         self.ps = np.zeros((0, 2))
         self.tri_indices = np.zeros((0, 3))
@@ -219,15 +211,17 @@ class TriMeMasterWidget(QtWidgets.QWidget):
 
     def triangulate(self):
         # --- estimate number of needed points based on density map
-        # rescale from bitmap to densities: 0 -> rho_max / 1e4        255 -> 0
-        rho_arr = (255 - self.density_array)/255 * self.rho_max / 1e4
+        rho_arr = (np.power(10, -self.density_orders*self.density_array/255) - 1e-5) / (1 - 1e-5)
 
         # poisson disc sampling
         self.ps = weighted_poisson_disc_sampling(rho_arr, bridson_k=10)
 
         # triangulation
-        tria = Delaunay(self.ps)
-        self.tri_indices = tria.simplices
+        if self.ps.shape[0] >= 3:
+            tria = Delaunay(self.ps)
+            self.tri_indices = tria.simplices
+        else:
+            self.tri_indices = np.zeros((0, 3))
 
         # triangle coloring
         n_tris = self.tri_indices.shape[0]
@@ -337,13 +331,15 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         ix = np.clip(int((mouse_x - (ww - cw) / 2) * iw / cw), 0, iw - 1)
         iy = np.clip(int((mouse_y - (wh - ch) / 2) * ih / ch), 0, ih - 1)
 
+        brush_color = int((100 - self.brush_value) * 2.55)
+
         for x in range(ix - self.brush_radius, ix + self.brush_radius):
             for y in range(iy - self.brush_radius, iy + self.brush_radius):
                 if x < 0 or x >= iw or y < 0 or y >= ih:
                     continue
 
                 if (x - ix)**2 + (y - iy)**2 < self.brush_radius**2:
-                    self.density_array[y, x] = self.brush_color
+                    self.density_array[y, x] = brush_color
 
         self.repaint()
 
