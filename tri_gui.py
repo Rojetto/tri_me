@@ -5,6 +5,7 @@ from scipy.spatial.qhull import Delaunay
 from PIL import Image
 from easytime import Timer
 import os.path
+import svgwrite
 
 
 class TriMeWindow(QtWidgets.QMainWindow):
@@ -27,6 +28,11 @@ class TriMeWindow(QtWidgets.QMainWindow):
         load_image.clicked.connect(self.on_load_image)
 
         buttons_layout.addWidget(load_image)
+
+        save_svg = QtWidgets.QPushButton('Save SVG')
+        save_svg.clicked.connect(self.on_save_svg)
+
+        buttons_layout.addWidget(save_svg)
 
         self.brush_value = QtWidgets.QDoubleSpinBox()
         self.brush_value.setRange(0, 100)
@@ -81,6 +87,11 @@ class TriMeWindow(QtWidgets.QMainWindow):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Open image', filter='Image Files (*.png *.jpg *.jpeg *.bmp);; All Files (*)')
         if os.path.isfile(path):
             self.master_widget.load_image(path)
+
+    def on_save_svg(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save SVG', filter='SVG (*.svg);; All Files (*)')
+        if path:
+            self.master_widget.save_svg(path)
 
 
 def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, bridson_k=30):
@@ -194,6 +205,23 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         self.tri_colors = np.zeros((0, 3))
 
         self.update()
+
+    def save_svg(self, path):
+        # disable anti-aliasing to close gaps between tris
+        svg = svgwrite.Drawing(path, (self.img_arr.shape[1], self.img_arr.shape[0]), shape_rendering='crispEdges')
+
+        for i in range(self.tri_indices.shape[0]):
+            tri_points = self.ps[self.tri_indices[i]]
+            color_tuple = self.tri_colors[i]
+
+            svg.add(svg.path([
+                'M', *tri_points[0],
+                'L', *tri_points[1],
+                'L', *tri_points[2],
+                'Z'
+            ], fill=f"rgb({color_tuple[0]}, {color_tuple[1]}, {color_tuple[2]})",))
+
+        svg.save()
 
     def triangulate(self):
         # --- estimate number of needed points based on density map
