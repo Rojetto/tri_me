@@ -1,3 +1,4 @@
+from enum import Enum
 from PyQt5 import QtCore, QtWidgets, QtGui
 import sys
 import numpy as np
@@ -54,6 +55,16 @@ class TriMeWindow(QtWidgets.QMainWindow):
         buttons_layout.addWidget(QtWidgets.QLabel('Radius:'))
         buttons_layout.addWidget(self.brush_radius)
 
+        self.mode_draw = QtWidgets.QRadioButton('Draw')
+        self.mode_draw.setChecked(self.master_widget.interact_mode == TriMeMasterWidget.InteractMode.DENSITY_DRAW)
+        self.mode_draw.toggled.connect(self.on_setting_changed)
+        buttons_layout.addWidget(self.mode_draw)
+
+        self.mode_manual = QtWidgets.QRadioButton('Manual')
+        self.mode_manual.setChecked(self.master_widget.interact_mode == TriMeMasterWidget.InteractMode.MANUAL_POINTS)
+        self.mode_manual.toggled.connect(self.on_setting_changed)
+        buttons_layout.addWidget(self.mode_manual)
+
         buttons_layout.addStretch(10)
 
         layers_layout = QtWidgets.QHBoxLayout()
@@ -81,6 +92,11 @@ class TriMeWindow(QtWidgets.QMainWindow):
         self.layer_tri_fill.toggled.connect(self.on_setting_changed)
         layers_layout.addWidget(self.layer_tri_fill)
 
+        self.layer_manual_points = QtWidgets.QCheckBox('Manual Points')
+        self.layer_manual_points.setChecked(self.master_widget.layer_manual_points)
+        self.layer_manual_points.toggled.connect(self.on_setting_changed)
+        layers_layout.addWidget(self.layer_manual_points)
+
         layers_layout.addStretch(10)
 
         triangulate = QtWidgets.QPushButton('Triangulate!')
@@ -100,6 +116,13 @@ class TriMeWindow(QtWidgets.QMainWindow):
         self.master_widget.layer_density = self.layer_density.isChecked()
         self.master_widget.layer_tri_outline = self.layer_tri_outline.isChecked()
         self.master_widget.layer_tri_fill = self.layer_tri_fill.isChecked()
+        self.master_widget.layer_manual_points = self.layer_manual_points.isChecked()
+
+        if self.mode_draw.isChecked():
+            self.master_widget.interact_mode = TriMeMasterWidget.InteractMode.DENSITY_DRAW
+        elif self.mode_manual.isChecked():
+            self.master_widget.interact_mode = TriMeMasterWidget.InteractMode.MANUAL_POINTS
+
         self.master_widget.update()
 
     def on_load_image(self):
@@ -143,9 +166,13 @@ def is_viable(grid, rho_arr, p: np.ndarray):
 
 
 @jit(nopython=True)
-def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, bridson_k=30):
+def weighted_poisson_disc_sampling(rho_arr: np.ndarray, initial_samples: np.ndarray, global_seed_throws=100, bridson_k=30):
     grid = np.ones(rho_arr.shape, dtype=np.intc) * -1
     samples = []
+
+    for i, p in enumerate(initial_samples):
+        samples.append([p[0], p[1]])
+        grid[int(p[1]), int(p[0])] = i
 
     done = False
     while not done:
@@ -192,6 +219,10 @@ def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, 
 
 
 class TriMeMasterWidget(QtWidgets.QWidget):
+    class InteractMode(Enum):
+        DENSITY_DRAW = 0
+        MANUAL_POINTS = 1
+
     def __init__(self):
         super().__init__()
 
@@ -199,12 +230,16 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         self.layer_density = True
         self.layer_tri_outline = False
         self.layer_tri_fill = True
+        self.layer_manual_points = True
+
+        self.interact_mode = self.InteractMode.DENSITY_DRAW
 
         self.brush_value = 50
         self.brush_radius = 50
 
         self.density_orders = 5
 
+        self.manual_points = []
         self.load_image('danny.jpg')
 
     def load_image(self, path):
@@ -242,7 +277,7 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         rho_arr = (np.power(10, -self.density_orders*self.density_array/255) - 1e-5) / (1 - 1e-5)
 
         # poisson disc sampling
-        self.ps = weighted_poisson_disc_sampling(rho_arr, bridson_k=10)
+        self.ps = weighted_poisson_disc_sampling(rho_arr, np.array(self.manual_points).reshape((-1, 2)), bridson_k=10)
 
         # triangulation
         if self.ps.shape[0] >= 3:
@@ -307,17 +342,6 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         painter.restore()
 
         painter.save()
-        red = QtGui.QColor('red')
-        painter.setBrush(red)
-        painter.setPen(red)
-        for i in range(self.ps.shape[0]):
-            cx = int(self.ps[i, 0] * cw / iw)
-            cy = int(self.ps[i, 1] * ch / ih)
-            r = 10
-            #painter.drawEllipse(cx - r, cy - r, 2*r, 2*r)
-        painter.restore()
-
-        painter.save()
         blue = QtGui.QColor('blue')
         if self.layer_tri_outline or self.layer_tri_fill:
             if self.layer_tri_outline:
@@ -331,6 +355,18 @@ class TriMeMasterWidget(QtWidgets.QWidget):
                 if self.layer_tri_fill:
                     painter.setBrush(color)
                 painter.drawPolygon(poly)
+        painter.restore()
+
+        painter.save()
+        red = QtGui.QColor('red')
+        if self.layer_manual_points:
+            painter.setBrush(red)
+            painter.setPen(black)
+            for p in self.manual_points:
+                cx = int(p[0] * cw / iw)
+                cy = int(p[1] * ch / ih)
+                r = 4
+                painter.drawEllipse(cx - r, cy - r, 2*r, 2*r)
         painter.restore()
 
     def canvas_size(self):
@@ -360,8 +396,8 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         ih = self.img.height()
         cw, ch = self.canvas_size()
 
-        ix = np.clip(int((mouse_x - (ww - cw) / 2) * iw / cw), 0, iw - 1)
-        iy = np.clip(int((mouse_y - (wh - ch) / 2) * ih / ch), 0, ih - 1)
+        ix = int((mouse_x - (ww - cw) / 2) * iw / cw)
+        iy = int((mouse_y - (wh - ch) / 2) * ih / ch)
 
         brush_color = int((100 - self.brush_value) * 2.55)
 
@@ -375,13 +411,52 @@ class TriMeMasterWidget(QtWidgets.QWidget):
 
         self.update()
 
+    def place_point(self, mouse_x, mouse_y):
+        ww = self.width()
+        wh = self.height()
+        iw = self.img.width()
+        ih = self.img.height()
+        cw, ch = self.canvas_size()
+
+        ix = np.clip((mouse_x - (ww - cw) / 2) * iw / cw, 0, iw - 1)
+        iy = np.clip((mouse_y - (wh - ch) / 2) * ih / ch, 0, ih - 1)
+
+        self.manual_points.append([ix, iy])
+
+        self.update()
+
+    def delete_point(self, mouse_x, mouse_y):
+        ww = self.width()
+        wh = self.height()
+        iw = self.img.width()
+        ih = self.img.height()
+        cw, ch = self.canvas_size()
+
+        r = 10
+
+        for p in self.manual_points:
+            pwx = p[0] * cw/iw + (ww - cw)/2
+            pwy = p[1] * ch/ih + (wh - ch)/2
+
+            if (mouse_x - pwx)**2 + (mouse_y - pwy)**2 < r**2:
+                self.manual_points.remove(p)
+
+        self.update()
+
     def mousePressEvent(self, e: QtGui.QMouseEvent):
-        if e.button() == QtCore.Qt.LeftButton:
-            self.draw(e.x(), e.y())
+        if self.interact_mode == TriMeMasterWidget.InteractMode.DENSITY_DRAW:
+            if e.button() == QtCore.Qt.LeftButton:
+                self.draw(e.x(), e.y())
+        elif self.interact_mode == TriMeMasterWidget.InteractMode.MANUAL_POINTS:
+            if e.button() == QtCore.Qt.LeftButton:
+                self.place_point(e.x(), e.y())
+            elif e.button() == QtCore.Qt.RightButton:
+                self.delete_point(e.x(), e.y())
 
     def mouseMoveEvent(self, e: QtGui.QMouseEvent):
-        if e.buttons() & QtCore.Qt.LeftButton:
-            self.draw(e.x(), e.y())
+        if self.interact_mode == TriMeMasterWidget.InteractMode.DENSITY_DRAW:
+            if e.buttons() & QtCore.Qt.LeftButton:
+                self.draw(e.x(), e.y())
 
 
 if __name__ == "__main__":
