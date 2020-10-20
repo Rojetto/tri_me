@@ -54,19 +54,34 @@ class TriMeWindow(QtWidgets.QMainWindow):
         buttons_layout.addWidget(QtWidgets.QLabel('Radius:'))
         buttons_layout.addWidget(self.brush_radius)
 
-        self.show_picture = QtWidgets.QCheckBox('Show picture')
-        self.show_picture.setChecked(self.master_widget.show_picture)
-        self.show_picture.stateChanged.connect(self.on_setting_changed)
-
-        buttons_layout.addWidget(self.show_picture)
-
-        self.fill_triangles = QtWidgets.QCheckBox('Fill triangles')
-        self.fill_triangles.setChecked(self.master_widget.fill_triangles)
-        self.fill_triangles.stateChanged.connect(self.on_setting_changed)
-
-        buttons_layout.addWidget(self.fill_triangles)
-
         buttons_layout.addStretch(10)
+
+        layers_layout = QtWidgets.QHBoxLayout()
+        main_layout.addLayout(layers_layout)
+
+        layers_layout.addWidget(QtWidgets.QLabel('Layers:'))
+
+        self.layer_image = QtWidgets.QCheckBox('Image')
+        self.layer_image.setChecked(self.master_widget.layer_image)
+        self.layer_image.toggled.connect(self.on_setting_changed)
+        layers_layout.addWidget(self.layer_image)
+
+        self.layer_density = QtWidgets.QCheckBox('Density')
+        self.layer_density.setChecked(self.master_widget.layer_density)
+        self.layer_density.toggled.connect(self.on_setting_changed)
+        layers_layout.addWidget(self.layer_density)
+
+        self.layer_tri_outline = QtWidgets.QCheckBox('Triangle Outline')
+        self.layer_tri_outline.setChecked(self.master_widget.layer_tri_outline)
+        self.layer_tri_outline.toggled.connect(self.on_setting_changed)
+        layers_layout.addWidget(self.layer_tri_outline)
+
+        self.layer_tri_fill = QtWidgets.QCheckBox('Triangle Color')
+        self.layer_tri_fill.setChecked(self.master_widget.layer_tri_fill)
+        self.layer_tri_fill.toggled.connect(self.on_setting_changed)
+        layers_layout.addWidget(self.layer_tri_fill)
+
+        layers_layout.addStretch(10)
 
         triangulate = QtWidgets.QPushButton('Triangulate!')
         triangulate.clicked.connect(self.master_widget.triangulate)
@@ -81,9 +96,11 @@ class TriMeWindow(QtWidgets.QMainWindow):
     def on_setting_changed(self):
         self.master_widget.brush_radius = int(self.brush_radius.value())
         self.master_widget.brush_value = int(self.brush_value.value())
-        self.master_widget.show_picture = self.show_picture.isChecked()
-        self.master_widget.fill_triangles = self.fill_triangles.isChecked()
-        self.master_widget.repaint()
+        self.master_widget.layer_image = self.layer_image.isChecked()
+        self.master_widget.layer_density = self.layer_density.isChecked()
+        self.master_widget.layer_tri_outline = self.layer_tri_outline.isChecked()
+        self.master_widget.layer_tri_fill = self.layer_tri_fill.isChecked()
+        self.master_widget.update()
 
     def on_load_image(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Open image', filter='Image Files (*.png *.jpg *.jpeg *.bmp);; All Files (*)')
@@ -178,8 +195,10 @@ class TriMeMasterWidget(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
 
-        self.show_picture = True
-        self.fill_triangles = True
+        self.layer_image = True
+        self.layer_density = True
+        self.layer_tri_outline = False
+        self.layer_tri_fill = True
 
         self.brush_value = 50
         self.brush_radius = 50
@@ -258,7 +277,7 @@ class TriMeMasterWidget(QtWidgets.QWidget):
             avg_color = np.sqrt(color_sum / barycentric_samples.shape[0]).astype(np.ubyte)
             self.tri_colors[i] = avg_color
 
-        self.repaint()
+        self.update()
 
     def paintEvent(self, e: QtGui.QPaintEvent):
         painter = QtGui.QPainter(self)
@@ -278,11 +297,13 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         painter.save()
         img_scale = cw / iw
         painter.scale(img_scale, img_scale)
-        if self.show_picture:
+        if self.layer_image:
             painter.drawPixmap(0, 0, self.img)
-            painter.setOpacity(0.5)  # draw density map semi transparent
-        density_img = QtGui.QImage(self.density_array.tobytes(), iw, ih, QtGui.QImage.Format_Grayscale8)
-        painter.drawImage(0, 0, density_img)
+        if self.layer_density:
+            if self.layer_image:
+                painter.setOpacity(0.5)  # draw density map semi transparent
+            density_img = QtGui.QImage(self.density_array.tobytes(), iw, ih, QtGui.QImage.Format_Grayscale8)
+            painter.drawImage(0, 0, density_img)
         painter.restore()
 
         painter.save()
@@ -298,16 +319,18 @@ class TriMeMasterWidget(QtWidgets.QWidget):
 
         painter.save()
         blue = QtGui.QColor('blue')
-        for i in range(self.tri_indices.shape[0]):
-            tri_points = self.ps[self.tri_indices[i]] * cw / iw
-            poly = QtGui.QPolygonF([QtCore.QPointF(*tri_point) for tri_point in tri_points])
-            color = QtGui.QColor(*self.tri_colors[i])
-            if self.fill_triangles:
-                painter.setPen(QtCore.Qt.NoPen)
-                painter.setBrush(color)
-            else:
+        if self.layer_tri_outline or self.layer_tri_fill:
+            if self.layer_tri_outline:
                 painter.setPen(blue)
-            painter.drawPolygon(poly)
+            else:
+                painter.setPen(QtCore.Qt.NoPen)
+            for i in range(self.tri_indices.shape[0]):
+                tri_points = self.ps[self.tri_indices[i]] * cw / iw
+                poly = QtGui.QPolygonF([QtCore.QPointF(*tri_point) for tri_point in tri_points])
+                color = QtGui.QColor(*self.tri_colors[i])
+                if self.layer_tri_fill:
+                    painter.setBrush(color)
+                painter.drawPolygon(poly)
         painter.restore()
 
     def canvas_size(self):
@@ -350,7 +373,7 @@ class TriMeMasterWidget(QtWidgets.QWidget):
                 if (x - ix)**2 + (y - iy)**2 < self.brush_radius**2:
                     self.density_array[y, x] = brush_color
 
-        self.repaint()
+        self.update()
 
     def mousePressEvent(self, e: QtGui.QMouseEvent):
         if e.button() == QtCore.Qt.LeftButton:
