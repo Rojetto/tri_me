@@ -61,6 +61,7 @@ class TriMeWindow(QtWidgets.QMainWindow):
         buttons_layout.addWidget(self.mode_draw)
 
         self.mode_manual = QtWidgets.QRadioButton('Manual')
+        self.mode_manual.setToolTip('Alternative: hold Shift')
         self.mode_manual.setChecked(self.master_widget.interact_mode == TriMeMasterWidget.InteractMode.MANUAL_POINTS)
         self.mode_manual.toggled.connect(self.on_setting_changed)
         buttons_layout.addWidget(self.mode_manual)
@@ -444,17 +445,17 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         self.update()
 
     def mousePressEvent(self, e: QtGui.QMouseEvent):
-        if self.interact_mode == TriMeMasterWidget.InteractMode.DENSITY_DRAW:
+        if self.interact_mode == TriMeMasterWidget.InteractMode.DENSITY_DRAW and not e.modifiers() & QtCore.Qt.ShiftModifier:
             if e.button() == QtCore.Qt.LeftButton:
                 self.draw(e.x(), e.y())
-        elif self.interact_mode == TriMeMasterWidget.InteractMode.MANUAL_POINTS:
+        elif self.interact_mode == TriMeMasterWidget.InteractMode.MANUAL_POINTS or e.modifiers() & QtCore.Qt.ShiftModifier:
             if e.button() == QtCore.Qt.LeftButton:
                 self.place_point(e.x(), e.y())
             elif e.button() == QtCore.Qt.RightButton:
                 self.delete_point(e.x(), e.y())
 
     def mouseMoveEvent(self, e: QtGui.QMouseEvent):
-        if self.interact_mode == TriMeMasterWidget.InteractMode.DENSITY_DRAW:
+        if self.interact_mode == TriMeMasterWidget.InteractMode.DENSITY_DRAW and not e.modifiers() & QtCore.Qt.ShiftModifier:
             if e.buttons() & QtCore.Qt.LeftButton:
                 self.draw(e.x(), e.y())
 
