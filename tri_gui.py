@@ -6,6 +6,7 @@ from PIL import Image
 from easytime import Timer
 import os.path
 import svgwrite
+from numba import jit
 
 
 class TriMeWindow(QtWidgets.QMainWindow):
@@ -95,51 +96,39 @@ class TriMeWindow(QtWidgets.QMainWindow):
             self.master_widget.save_svg(path)
 
 
+@jit(nopython=True)
+def density_to_radius(rho):
+    if rho == 0:
+        r = np.inf
+    else:
+        r = np.sqrt(1 / (2 * np.sqrt(3) * rho))
+
+    return r
+
+
+@jit(nopython=True)
+def is_viable(grid, rho_arr, p: np.ndarray):
+    p_int = p.astype(np.intc)
+    if p_int[0] < 0 or p_int[0] > grid.shape[1] - 1 or p_int[1] < 0 or p_int[1] > grid.shape[0] - 1:
+        return False
+
+    rho = rho_arr[p_int[1], p_int[0]]
+    if rho == 0:
+        return False
+
+    r = density_to_radius(rho)
+    for y in range(max(0, p_int[1] - int(r)), min(grid.shape[0] - 1, p_int[1] + int(r))):
+        for x in range(max(0, p_int[0] - int(r)), min(grid.shape[1] - 1, p_int[0] + int(r))):
+            if (x - p[0])**2 + (y - p[1])**2 < r**2 and grid[y, x] >= 0:
+                return False
+
+    return True
+
+
+@jit(nopython=True)
 def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, bridson_k=30):
-    grid = np.ones(rho_arr.shape, dtype=int) * -1
-    coordinate_grid = np.zeros((*grid.shape, 2))  # accelerator structure for circle checks
-    for y in range(grid.shape[0]):
-        for x in range(grid.shape[1]):
-            coordinate_grid[y,x,0] = x
-            coordinate_grid[y,x,1] = y
+    grid = np.ones(rho_arr.shape, dtype=np.intc) * -1
     samples = []
-
-    def density_to_radius(rho):
-        if rho == 0:
-            r = np.inf
-        else:
-            r = np.sqrt(1 / (2 * np.sqrt(3) * rho))
-
-        return r
-
-    def is_viable(p: np.ndarray):
-        p_int = p.astype(int)
-        if p_int[0] < 0 or p_int[0] > grid.shape[1] - 1 or p_int[1] < 0 or p_int[1] > grid.shape[0] - 1:
-            return False
-
-        rho = rho_arr[p_int[1], p_int[0]]
-        if rho == 0:
-            return False
-
-        r = density_to_radius(rho)
-        ymin = max(0, p_int[1] - int(r))
-        ymax = min(grid.shape[0] - 1, p_int[1] + int(r))
-        xmin = max(0, p_int[0] - int(r))
-        xmax = min(grid.shape[1] - 1, p_int[0] + int(r))
-
-        in_circle = np.sum(np.power(coordinate_grid[ymin:ymax, xmin:xmax] - p, 2), axis=2) < r**2
-        has_samples = grid[ymin:ymax, xmin:xmax] >= 0
-
-        not_viable = np.any(np.logical_and(in_circle, has_samples))
-
-        return not not_viable
-
-    def add_sample(p: np.ndarray):
-        samples.append(p)
-        index = len(samples) - 1
-        grid[int(p[1]), int(p[0])] = index
-
-        return index
 
     done = False
     while not done:
@@ -147,8 +136,10 @@ def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, 
         # find a viable seed sample by global dart throwing
         for i in range(global_seed_throws):
             sample = np.array([np.random.rand() * grid.shape[1], np.random.rand() * grid.shape[0]])
-            if is_viable(sample):
-                sample_index = add_sample(sample)
+            if is_viable(grid, rho_arr, sample):
+                samples.append([sample[0], sample[1]])
+                sample_index = len(samples) - 1
+                grid[int(sample[1]), int(sample[0])] = sample_index
                 active_list.append(sample_index)
                 break
         else:
@@ -171,8 +162,11 @@ def weighted_poisson_disc_sampling(rho_arr: np.ndarray, global_seed_throws=100, 
                 a = 2 * np.pi * np.random.rand()
 
                 candidate = np.array([p[0] + R * np.cos(a), p[1] + R * np.sin(a)])
-                if is_viable(candidate):
-                    candidate_index = add_sample(candidate)
+                if is_viable(grid, rho_arr, candidate):
+                    samples.append([candidate[0], candidate[1]])
+                    candidate_index = len(samples) - 1
+                    grid[int(candidate[1]), int(candidate[0])] = candidate_index
+
                     active_list.append(candidate_index)
             else:
                 active_list.pop(pi)
