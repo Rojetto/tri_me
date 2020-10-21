@@ -4,10 +4,10 @@ import sys
 import numpy as np
 from scipy.spatial.qhull import Delaunay
 from PIL import Image
-from easytime import Timer
 import os.path
 import svgwrite
 from numba import jit
+import pickle
 
 
 class TriMeWindow(QtWidgets.QMainWindow):
@@ -27,14 +27,24 @@ class TriMeWindow(QtWidgets.QMainWindow):
         buttons_layout = QtWidgets.QHBoxLayout()
         main_layout.addLayout(buttons_layout)
 
-        load_image = QtWidgets.QPushButton('Load image')
-        load_image.clicked.connect(self.on_load_image)
+        load_project = QtWidgets.QPushButton()
+        load_project.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_DialogOpenButton))
+        load_project.setToolTip('Load project')
+        load_project.clicked.connect(self.on_load_project)
+        buttons_layout.addWidget(load_project)
 
+        save_project = QtWidgets.QPushButton()
+        save_project.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_DialogSaveButton))
+        save_project.setToolTip('Save project')
+        save_project.clicked.connect(self.on_save_project)
+        buttons_layout.addWidget(save_project)
+
+        load_image = QtWidgets.QPushButton('Import image')
+        load_image.clicked.connect(self.on_load_image)
         buttons_layout.addWidget(load_image)
 
-        save_svg = QtWidgets.QPushButton('Save SVG')
+        save_svg = QtWidgets.QPushButton('Export SVG')
         save_svg.clicked.connect(self.on_save_svg)
-
         buttons_layout.addWidget(save_svg)
 
         self.brush_value = QtWidgets.QDoubleSpinBox()
@@ -135,6 +145,16 @@ class TriMeWindow(QtWidgets.QMainWindow):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save SVG', filter='SVG (*.svg);; All Files (*)')
         if path:
             self.master_widget.save_svg(path)
+
+    def on_load_project(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Load project', filter='TriMe Project (*.tri);; All Files (*)')
+        if os.path.isfile(path):
+            self.master_widget.load_project(path)
+
+    def on_save_project(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save project', filter='TriMe Project (*.tri);; All Files (*)')
+        if path:
+            self.master_widget.save_project(path)
 
 
 @jit(nopython=True)
@@ -240,19 +260,48 @@ class TriMeMasterWidget(QtWidgets.QWidget):
 
         self.density_orders = 5
 
-        self.manual_points = []
         self.load_image('danny.jpg')
 
     def load_image(self, path):
-        self.img = QtGui.QPixmap(path)
+        self.img = QtGui.QImage(path)
         pil_img = Image.open(path)
-        self.img_arr = np.array(pil_img)
+        self.img_arr = np.array(pil_img)[:, :, :3]  # ignore alpha channel if it exists
         # Default: everything white (no tris)
         self.density_array = np.ones((self.img.height(), self.img.width()), dtype=np.ubyte) * 255
 
         self.ps = np.zeros((0, 2))
         self.tri_indices = np.zeros((0, 3))
         self.tri_colors = np.zeros((0, 3))
+
+        self.manual_points = []
+
+        self.update()
+
+    def save_project(self, path):
+        pickle_dict = {
+            'img_arr': self.img_arr,
+            'density_array': self.density_array,
+            'ps': self.ps,
+            'tri_indices': self.tri_indices,
+            'tri_colors': self.tri_colors,
+            'manual_points': self.manual_points
+        }
+
+        with open(path, 'wb') as f:
+            pickle.dump(pickle_dict, f)
+
+    def load_project(self, path):
+        with open(path, 'rb') as f:
+            pickle_dict = pickle.load(f)
+
+        self.img_arr = pickle_dict['img_arr']
+        self.density_array = pickle_dict['density_array']
+        self.ps = pickle_dict['ps']
+        self.tri_indices = pickle_dict['tri_indices']
+        self.tri_colors = pickle_dict['tri_colors']
+        self.manual_points = pickle_dict['manual_points']
+
+        self.img = QtGui.QImage(self.img_arr.tobytes(), self.img_arr.shape[1], self.img_arr.shape[0], QtGui.QImage.Format_RGB888)
 
         self.update()
 
@@ -334,7 +383,7 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         img_scale = cw / iw
         painter.scale(img_scale, img_scale)
         if self.layer_image:
-            painter.drawPixmap(0, 0, self.img)
+            painter.drawImage(0, 0, self.img)
         if self.layer_density:
             if self.layer_image:
                 painter.setOpacity(0.5)  # draw density map semi transparent
