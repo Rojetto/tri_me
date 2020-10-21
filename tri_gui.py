@@ -174,7 +174,7 @@ def is_viable(grid, rho_arr, p: np.ndarray):
         return False
 
     rho = rho_arr[p_int[1], p_int[0]]
-    if rho == 0:
+    if rho < 1e-10:
         return False
 
     r = density_to_radius(rho)
@@ -236,7 +236,12 @@ def weighted_poisson_disc_sampling(rho_arr: np.ndarray, initial_samples: np.ndar
             else:
                 active_list.pop(pi)
 
-    return np.array(samples)
+    # weird workaround for numba bug https://github.com/numba/numba/issues/3579
+    # np.array somehow fails when samples is empty, this only happens when jit compiling
+    if samples:
+        return np.array(samples)
+    else:
+        return np.zeros((0, 2))
 
 
 class TriMeMasterWidget(QtWidgets.QWidget):
@@ -258,7 +263,7 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         self.brush_value = 50
         self.brush_radius = 50
 
-        self.density_orders = 5
+        self.density_orders = 4
 
         self.load_image('danny.jpg')
 
@@ -323,11 +328,23 @@ class TriMeMasterWidget(QtWidgets.QWidget):
         svg.save()
 
     def triangulate(self):
-        # --- estimate number of needed points based on density map
-        rho_arr = (np.power(10, -self.density_orders*self.density_array/255) - 1e-5) / (1 - 1e-5)
+        # weird logarithmic scaling with this effect:
+        # a=self.density_array/255 in [0, 1]
+        # a = 0 maps to a density of rho_max
+        # a = 1 maps to a density of 0
+        # values in between scale the density exponentially over m=5 orders of magnitude
+        rho_max = 1/(4*np.sqrt(3))  # follows from rmin=1/np.sqrt(2)
+        # this doesn't reach rho_max exactly because of the subtraction
+        rho_arr_unscaled = np.power(10, -self.density_orders*self.density_array/255 + np.log10(rho_max)) - rho_max/10**(self.density_orders)
+        rescaling_factor = 1 / (1 - 1/10**self.density_orders)
+        rho_arr = rho_arr_unscaled * rescaling_factor
 
         # poisson disc sampling
-        self.ps = weighted_poisson_disc_sampling(rho_arr, np.array(self.manual_points).reshape((-1, 2)), bridson_k=10)
+        if self.manual_points:
+            initial_samples = np.array(self.manual_points)
+        else:
+            initial_samples = np.zeros((0, 2))
+        self.ps = weighted_poisson_disc_sampling(rho_arr, initial_samples, bridson_k=10)
 
         # triangulation
         if self.ps.shape[0] >= 3:
